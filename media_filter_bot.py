@@ -8,11 +8,6 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from constants import ADMIN_LIST, API_URL, BOT_ID, TOKEN, USERS, USER_BLACK_LIST, FORWARD_CHAT_BLACK_LIST
 
-# Enable logging
-# logging.basicConfig(
-#     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-# )
-
 bot = Bot(token=TOKEN)
 IS_TOTAL_CENSORSHIP = False
 ALL_PERMISSIONS = ChatPermissions(can_send_messages=True,
@@ -28,8 +23,10 @@ async def unban_user_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     chat_id = update.effective_message.chat_id
     username = get_username_from_command(update.effective_message)
+    user_id = USERS.get(username)
+    logging.info(f"User: {username}, {user_id}")
     await bot.delete_message(chat_id, update.effective_message.message_id)
-    await bot.restrict_chat_member(chat_id, USERS.get(username), ALL_PERMISSIONS)
+    await bot.restrict_chat_member(chat_id, user_id, ALL_PERMISSIONS)
     await bot.send_message(chat_id, f"{username} media was unbunned.")
 
 
@@ -40,6 +37,7 @@ async def ban_user_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_message.chat_id
     username = get_username_from_command(update.effective_message)
     user_id = USERS.get(username)
+    logging.info(f"User: {username}, {user_id}")
     await bot.delete_message(chat_id, update.effective_message.message_id)
     await bot.restrict_chat_member(chat_id, user_id, ChatPermissions(can_send_messages=True, can_send_media_messages=False), datetime.now() + timedelta(hours=6))
     await bot.send_message(chat_id, f"{username} media was bunned.")
@@ -71,20 +69,27 @@ async def blur_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     else:
         photo_file = await bot.get_file(message.photo[-2].file_id)
         photo_bytearray = await photo_file.download_as_bytearray()
+        logging.info(f"File size: {message.photo[-2].file_size}")
         try:
             response = requests.post(API_URL, files={'image': ('test.png', photo_bytearray)})
+            logging.info(response.json())
             predictions = list(filter(lambda prediction: prediction["className"] != "Neutral" and prediction["className"] != "Drawing", response.json()))
-            print(predictions, response.json())
-            for prediction in predictions:
-                probability = int(prediction["probability"] * 100)
-                if probability > 49:
-                    await resend_message_with_spoiler(chat_id, message_id, message.photo,
-                                                    f"{custom_caption} (automatically censored with prediction {prediction['className']}={probability})")
+            is_nsfw, prediction_caption = analyse_predictions(predictions)
+            if is_nsfw:
+                await resend_message_with_spoiler(chat_id, message_id, message.photo, f"{custom_caption} {prediction_caption}")
         except Exception as e:
-            print(f"API error... {str(e)}\n")
+            logging.error(f"API error... {str(e)}\n")
             await bot.send_message(chat_id, f"API error...")
 
-    print(f"All users in {chat_id}\n", USERS, "\nBLACK_LIST\n", FORWARD_CHAT_BLACK_LIST)
+    logging.info(f"All users in {chat_id}\n", USERS, "\nBLACK_LIST\n", FORWARD_CHAT_BLACK_LIST)
+
+
+def analyse_predictions(predictions):
+    for prediction in predictions:
+        probability = int(prediction["probability"] * 100)
+        if probability > 49:
+            return True, f"(automatically censored with prediction {prediction['className']}={probability})"
+    return False, "Photo is neutral"
 
 
 async def resend_message_with_spoiler(chat_id, message_id, photo, custom_caption) -> None:
@@ -96,7 +101,7 @@ async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     chat_id = update.effective_message.chat_id
     message = update.effective_message
     if is_reply_command_valid(update.effective_message):
-        await bot.delete_message(chat_id, message.message_id)
+        await message.delete()
         await bot.delete_message(chat_id, message.reply_to_message.message_id)
 
 
@@ -104,7 +109,7 @@ async def add_forward_chat_to_black_list(update: Update, context: ContextTypes.D
     reply_to_message = update.effective_message.reply_to_message
     if is_reply_command_valid(update.effective_message) and reply_to_message.forward_from_chat:
         FORWARD_CHAT_BLACK_LIST.add(reply_to_message.forward_from_chat.id)
-        print("Added chat to black list:\n", FORWARD_CHAT_BLACK_LIST)
+        logging.info("Added chat to black list:\n", FORWARD_CHAT_BLACK_LIST)
         await blur_photo(update, context)
 
 
@@ -150,7 +155,7 @@ def main() -> None:
 
     application.add_error_handler(error)
 
-    application.run_polling(poll_interval=5)
+    application.run_polling()
 
 
 if __name__ == "__main__":
