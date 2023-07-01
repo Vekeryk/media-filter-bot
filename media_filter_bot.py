@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python3.11
 from datetime import datetime, timedelta
 import logging
 import requests
@@ -9,23 +9,23 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 from constants import ADMIN_LIST, API_URL, BOT_ID, TOKEN, USERS, USER_BLACK_LIST, FORWARD_CHAT_BLACK_LIST
 
 # Enable logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+# logging.basicConfig(
+#     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+# )
 
 bot = Bot(token=TOKEN)
 IS_TOTAL_CENSORSHIP = False
-ALL_PERMISSIONS = ChatPermissions(can_send_messages=True, 
-                                  can_send_media_messages=True, 
-                                  can_send_other_messages=True, 
-                                  can_add_web_page_previews=True, 
+ALL_PERMISSIONS = ChatPermissions(can_send_messages=True,
+                                  can_send_media_messages=True,
+                                  can_send_other_messages=True,
+                                  can_add_web_page_previews=True,
                                   can_send_polls=True)
 
 
 async def unban_user_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_admin(update.effective_message):
         return
-    
+
     chat_id = update.effective_message.chat_id
     username = get_username_from_command(update.effective_message)
     await bot.delete_message(chat_id, update.effective_message.message_id)
@@ -55,7 +55,7 @@ async def blur_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     chat_id = message.chat_id
     USERS[username] = user_id
 
-    if not message.photo:
+    if not message.photo and user_id == BOT_ID:
         return
 
     message_id = message.message_id
@@ -69,18 +69,22 @@ async def blur_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     elif forward_from_chat and forward_from_chat.id in FORWARD_CHAT_BLACK_LIST or IS_TOTAL_CENSORSHIP:
         await resend_message_with_spoiler(chat_id, message_id, message.photo, custom_caption)
     else:
-        photo_file = await bot.get_file(message.photo[-1].file_id)
+        photo_file = await bot.get_file(message.photo[-2].file_id)
         photo_bytearray = await photo_file.download_as_bytearray()
-        response = requests.post(API_URL, files={'image': ('test.png', photo_bytearray)})
-        predictions = list(filter(lambda prediction: prediction["className"] != "Neutral" and prediction["className"] != "Drawing", response.json()))
-        print(predictions, response.json())
-        for prediction in predictions:
-            probability = int(prediction["probability"] * 100)
-            if probability > 60:
-                await resend_message_with_spoiler(chat_id, message_id, message.photo, 
-                                                  f"{custom_caption} (prediction {prediction['className']}={probability})")
+        try:
+            response = requests.post(API_URL, files={'image': ('test.png', photo_bytearray)})
+            predictions = list(filter(lambda prediction: prediction["className"] != "Neutral" and prediction["className"] != "Drawing", response.json()))
+            print(predictions, response.json())
+            for prediction in predictions:
+                probability = int(prediction["probability"] * 100)
+                if probability > 49:
+                    await resend_message_with_spoiler(chat_id, message_id, message.photo,
+                                                    f"{custom_caption} (automatically censored with prediction {prediction['className']}={probability})")
+        except Exception as e:
+            print(f"API error... {str(e)}\n")
+            await bot.send_message(chat_id, f"API error...")
 
-    print(f"All users in {chat_id}\n", USERS)
+    print(f"All users in {chat_id}\n", USERS, "\nBLACK_LIST\n", FORWARD_CHAT_BLACK_LIST)
 
 
 async def resend_message_with_spoiler(chat_id, message_id, photo, custom_caption) -> None:
@@ -114,6 +118,10 @@ async def toggle_censorship(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await bot.delete_message(chat_id, update.effective_message.message_id)
 
 
+def error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    print(f"Update {update} caused error {context.error}")
+
+
 def is_reply_command_valid(message):
     user_id = message.from_user.id
     reply_to_message = message.reply_to_message
@@ -140,7 +148,9 @@ def main() -> None:
     application.add_handler(CommandHandler("unban", unban_user_media))
     application.add_handler(CommandHandler("censor", toggle_censorship))
 
-    application.run_polling()
+    application.add_error_handler(error)
+
+    application.run_polling(poll_interval=5)
 
 
 if __name__ == "__main__":
