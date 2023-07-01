@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 from datetime import datetime, timedelta
 import logging
+import requests
 
 from telegram import ChatPermissions, Bot
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
-from constants import ADMIN_LIST, BOT_ID, TOKEN, USERS, USER_BLACK_LIST, FORWARD_CHAT_BLACK_LIST
+from constants import ADMIN_LIST, API_URL, BOT_ID, TOKEN, USERS, USER_BLACK_LIST, FORWARD_CHAT_BLACK_LIST
 
 # Enable logging
 logging.basicConfig(
@@ -67,6 +68,17 @@ async def blur_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await resend_message_with_spoiler(chat_id, message_id, message.photo, custom_caption)
     elif forward_from_chat and forward_from_chat.id in FORWARD_CHAT_BLACK_LIST or IS_TOTAL_CENSORSHIP:
         await resend_message_with_spoiler(chat_id, message_id, message.photo, custom_caption)
+    else:
+        photo_file = await bot.get_file(message.photo[-1].file_id)
+        photo_bytearray = await photo_file.download_as_bytearray()
+        response = requests.post(API_URL, files={'image': ('test.png', photo_bytearray)})
+        predictions = list(filter(lambda prediction: prediction["className"] != "Neutral" and prediction["className"] != "Drawing", response.json()))
+        print(predictions, response.json())
+        for prediction in predictions:
+            probability = int(prediction["probability"] * 100)
+            if probability > 60:
+                await resend_message_with_spoiler(chat_id, message_id, message.photo, 
+                                                  f"{custom_caption} (prediction {prediction['className']}={probability})")
 
     print(f"All users in {chat_id}\n", USERS)
 
