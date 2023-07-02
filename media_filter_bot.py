@@ -1,18 +1,20 @@
 #!/usr/bin/python3.11
 from datetime import datetime, timedelta
+import io
 import logging
-import requests
 
+from model import load_model, classify
 from telegram import ChatPermissions, Bot
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
-from constants import ADMIN_CHAT, ADMIN_LIST, API_URL, AUTO_CAPTION, BOT_ID, TOKEN, USERS, USER_BLACK_LIST, FORWARD_CHAT_BLACK_LIST
+from constants import ADMIN_CHAT, ADMIN_LIST, AUTO_CAPTION, BOT_ID, TOKEN, USERS, USER_BLACK_LIST, FORWARD_CHAT_BLACK_LIST
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
 bot = Bot(token=TOKEN)
+model = load_model()
 IS_TOTAL_CENSORSHIP = False
 ALL_PERMISSIONS = ChatPermissions(can_send_messages=True,
                                   can_send_media_messages=True,
@@ -73,18 +75,18 @@ async def blur_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await resend_message_with_spoiler(chat_id, message_id, message.photo, custom_caption)
     else:
         photo_file = await bot.get_file(message.photo[-2].file_id)
-        photo_bytearray = await photo_file.download_as_bytearray()
         logging.info(f"File size: {message.photo[-2].file_size}")
+        photo_bytearray = await photo_file.download_as_bytearray()
+        photo_bytes_io = io.BytesIO(photo_bytearray)
         try:
-            response = requests.post(API_URL, files={'image': ('test.png', photo_bytearray)})
-            logging.info(response)
-            logging.info(response.json())
-            is_nsfw, prediction_caption = analyse_predictions(response.json())
+            predictions = classify(model, photo_bytes_io)
+            logging.info(predictions)
+            is_nsfw, prediction_caption = analyse_predictions(predictions)
             if is_nsfw:
                 await resend_message_with_spoiler(chat_id, message_id, message.photo, f"{custom_caption} {prediction_caption}")
         except Exception as e:
-            logging.error(f"API error... {str(e)}", exc_info=True)
-            await bot.send_message(ADMIN_CHAT, "API error...")
+            logging.error(f"Model error... {str(e)}", exc_info=True)
+            await bot.send_message(ADMIN_CHAT, "Model error...")
 
     logging.info(f"Chat {chat_id} - All users {USERS}, BLACK_LIST: {FORWARD_CHAT_BLACK_LIST}")
 
