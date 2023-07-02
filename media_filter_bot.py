@@ -6,7 +6,11 @@ import requests
 from telegram import ChatPermissions, Bot
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
-from constants import ADMIN_LIST, API_URL, BOT_ID, TOKEN, USERS, USER_BLACK_LIST, FORWARD_CHAT_BLACK_LIST
+from constants import ADMIN_CHAT, ADMIN_LIST, API_URL, AUTO_CAPTION, BOT_ID, TOKEN, USERS, USER_BLACK_LIST, FORWARD_CHAT_BLACK_LIST
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 
 bot = Bot(token=TOKEN)
 IS_TOTAL_CENSORSHIP = False
@@ -15,7 +19,8 @@ ALL_PERMISSIONS = ChatPermissions(can_send_messages=True,
                                   can_send_other_messages=True,
                                   can_add_web_page_previews=True,
                                   can_send_polls=True)
-
+BAN_PERMISSIONS = ChatPermissions(can_send_messages=True, 
+                                  can_send_media_messages=False)
 
 async def unban_user_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_admin(update.effective_message):
@@ -39,7 +44,7 @@ async def ban_user_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = USERS.get(username)
     logging.info(f"User: {username}, {user_id}")
     await bot.delete_message(chat_id, update.effective_message.message_id)
-    await bot.restrict_chat_member(chat_id, user_id, ChatPermissions(can_send_messages=True, can_send_media_messages=False), datetime.now() + timedelta(hours=6))
+    await bot.restrict_chat_member(chat_id, user_id, BAN_PERMISSIONS, datetime.now() + timedelta(hours=6))
     await bot.send_message(chat_id, f"{username} media was bunned.")
 
 
@@ -53,7 +58,7 @@ async def blur_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     chat_id = message.chat_id
     USERS[username] = user_id
 
-    if not message.photo and user_id == BOT_ID:
+    if not message.photo or user_id == BOT_ID:
         return
 
     message_id = message.message_id
@@ -72,23 +77,26 @@ async def blur_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         logging.info(f"File size: {message.photo[-2].file_size}")
         try:
             response = requests.post(API_URL, files={'image': ('test.png', photo_bytearray)})
+            logging.info(response)
             logging.info(response.json())
-            predictions = list(filter(lambda prediction: prediction["className"] != "Neutral" and prediction["className"] != "Drawing", response.json()))
-            is_nsfw, prediction_caption = analyse_predictions(predictions)
+            is_nsfw, prediction_caption = analyse_predictions(response.json())
             if is_nsfw:
                 await resend_message_with_spoiler(chat_id, message_id, message.photo, f"{custom_caption} {prediction_caption}")
         except Exception as e:
-            logging.error(f"API error... {str(e)}\n")
-            await bot.send_message(chat_id, f"API error...")
+            logging.error(f"API error... {str(e)}", exc_info=True)
+            await bot.send_message(ADMIN_CHAT, "API error...")
 
-    logging.info(f"All users in {chat_id}\n", USERS, "\nBLACK_LIST\n", FORWARD_CHAT_BLACK_LIST)
+    logging.info(f"Chat {chat_id} - All users {USERS}, BLACK_LIST: {FORWARD_CHAT_BLACK_LIST}")
 
 
 def analyse_predictions(predictions):
-    for prediction in predictions:
-        probability = int(prediction["probability"] * 100)
+    predictions.pop("Neutral")
+    if predictions["Drawing"] > 49 and predictions["Hentai"] > 29:
+        return True, AUTO_CAPTION.format(f"Drawing={predictions['Drawing']}, Hentai={predictions['Hentai']}") 
+    predictions.pop("Drawing")
+    for name, probability in predictions.items():
         if probability > 49:
-            return True, f"(automatically censored with prediction {prediction['className']}={probability})"
+            return True, AUTO_CAPTION.format(f"{name}={probability}")
     return False, "Photo is neutral"
 
 
@@ -109,7 +117,7 @@ async def add_forward_chat_to_black_list(update: Update, context: ContextTypes.D
     reply_to_message = update.effective_message.reply_to_message
     if is_reply_command_valid(update.effective_message) and reply_to_message.forward_from_chat:
         FORWARD_CHAT_BLACK_LIST.add(reply_to_message.forward_from_chat.id)
-        logging.info("Added chat to black list:\n", FORWARD_CHAT_BLACK_LIST)
+        logging.info("Added chat to black list: {FORWARD_CHAT_BLACK_LIST}")
         await blur_photo(update, context)
 
 
