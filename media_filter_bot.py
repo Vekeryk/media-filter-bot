@@ -21,7 +21,7 @@ ALL_PERMISSIONS = ChatPermissions(can_send_messages=True,
                                   can_send_other_messages=True,
                                   can_add_web_page_previews=True,
                                   can_send_polls=True)
-BAN_PERMISSIONS = ChatPermissions(can_send_messages=True, 
+BAN_PERMISSIONS = ChatPermissions(can_send_messages=True,
                                   can_send_media_messages=False)
 
 async def unban_user_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -52,6 +52,7 @@ async def ban_user_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def blur_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
+    original_username = update.effective_message.from_user.username
     if update.message.reply_to_message:
         message = update.message.reply_to_message
 
@@ -65,7 +66,8 @@ async def blur_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     message_id = message.message_id
     caption = message.caption
-    custom_caption = f'Від {username}: {caption}' if caption else f'Від {username}'
+    author = f'Від {username} (spoilered by {original_username})' if update.message.reply_to_message else f'Від {username}'
+    custom_caption = f'{author}: {caption}' if caption else author
     forward_from_chat = message.forward_from_chat
 
     if update.message.reply_to_message and user_id != BOT_ID:
@@ -94,7 +96,7 @@ async def blur_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 def analyse_predictions(predictions):
     predictions.pop("Neutral")
     if predictions["Drawing"] > 49 and predictions["Hentai"] > 29:
-        return True, AUTO_CAPTION.format(f"Drawing={predictions['Drawing']}, Hentai={predictions['Hentai']}") 
+        return True, AUTO_CAPTION.format(f"Drawing={predictions['Drawing']}, Hentai={predictions['Hentai']}")
     predictions.pop("Drawing")
     for name, probability in predictions.items():
         if probability > 49:
