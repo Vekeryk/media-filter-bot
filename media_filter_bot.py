@@ -4,8 +4,7 @@ import io
 import logging
 
 from model import load_model, classify
-from telegram import ChatPermissions, Message
-from telegram import Update
+from telegram import ChatPermissions, Message, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from constants import ADMIN_CHAT, ADMIN_LIST, AUTO_CAPTION, BOT_ID, TOKEN, USERS, USER_BLACK_LIST, FORWARD_CHAT_BLACK_LIST
 
@@ -45,7 +44,7 @@ async def ban_user_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = USERS.get(username)
     logging.info(f"User: {username}, {user_id}")
     await update.effective_message.delete()
-    await context.bot.restrict_chat_member(chat_id, user_id, BAN_PERMISSIONS, datetime.now() + timedelta(hours=6))
+    await context.bot.restrict_chat_member(chat_id, user_id, BAN_PERMISSIONS, datetime.now() + timedelta(hours=1))
     await context.bot.send_message(chat_id, f"{username} media was bunned.")
 
 
