@@ -6,7 +6,7 @@ import logging
 from model import load_model, classify
 from telegram import ChatPermissions, Message, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
-from constants import ADMIN_CHAT, ADMIN_LIST, AUTO_CAPTION, BOT_ID, TOKEN, USERS, USER_BLACK_LIST, FORWARD_CHAT_BLACK_LIST
+from constants import ADMIN_CHAT, ADMIN_LIST, AUTO_CAPTION, TOKEN, USERS, USER_BLACK_LIST, FORWARD_CHAT_BLACK_LIST
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -54,7 +54,7 @@ async def sloiler_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
     username = message.from_user.username
     USERS[username] = user_id
 
-    if not message.photo or user_id == BOT_ID:
+    if not message.photo or user_id == context.bot.id:
         return
 
     custom_caption = f'Від {username}: {message.caption}' if message.caption else f'Від {username}'
@@ -99,7 +99,7 @@ async def spoiler_reply_to_photo(update: Update, context: ContextTypes.DEFAULT_T
     message = update.effective_message
     reply_to_message = update.message.reply_to_message
 
-    if reply_to_message and reply_to_message.photo and reply_to_message.from_user.id != BOT_ID:
+    if reply_to_message and reply_to_message.photo and reply_to_message.from_user.id != context.bot.id:
         reporter_username = message.from_user.username
         from_caption = f'From {reply_to_message.from_user.username} (spoilered by {reporter_username})'
         custom_caption = f'{from_caption}: {reply_to_message.caption}' if reply_to_message.caption else from_caption
