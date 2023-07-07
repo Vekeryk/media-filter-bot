@@ -4,7 +4,7 @@ import io
 import logging
 
 from model import load_model, classify
-from telegram import ChatPermissions, Bot, Message
+from telegram import ChatPermissions, Message
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from constants import ADMIN_CHAT, ADMIN_LIST, AUTO_CAPTION, BOT_ID, TOKEN, USERS, USER_BLACK_LIST, FORWARD_CHAT_BLACK_LIST
@@ -13,7 +13,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
-bot = Bot(token=TOKEN)
 model = load_model()
 IS_TOTAL_CENSORSHIP = False
 ALL_PERMISSIONS = ChatPermissions(can_send_messages=True,
@@ -32,9 +31,9 @@ async def unban_user_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     username = get_username_from_command(update.effective_message)
     user_id = USERS.get(username)
     logging.info(f"User: {username}, {user_id}")
-    await bot.delete_message(chat_id, update.effective_message.message_id)
-    await bot.restrict_chat_member(chat_id, user_id, ALL_PERMISSIONS)
-    await bot.send_message(chat_id, f"{username} media was unbunned.")
+    await update.effective_message.delete()
+    await context.bot.restrict_chat_member(chat_id, user_id, ALL_PERMISSIONS)
+    await context.bot.send_message(chat_id, f"{username} media was unbunned.")
 
 
 async def ban_user_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -45,9 +44,9 @@ async def ban_user_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     username = get_username_from_command(update.effective_message)
     user_id = USERS.get(username)
     logging.info(f"User: {username}, {user_id}")
-    await bot.delete_message(chat_id, update.effective_message.message_id)
-    await bot.restrict_chat_member(chat_id, user_id, BAN_PERMISSIONS, datetime.now() + timedelta(hours=6))
-    await bot.send_message(chat_id, f"{username} media was bunned.")
+    await update.effective_message.delete()
+    await context.bot.restrict_chat_member(chat_id, user_id, BAN_PERMISSIONS, datetime.now() + timedelta(hours=6))
+    await context.bot.send_message(chat_id, f"{username} media was bunned.")
 
 
 async def sloiler_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -63,15 +62,15 @@ async def sloiler_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
     forward_from_chat = message.forward_from_chat
 
     if forward_from_chat and forward_from_chat.id in FORWARD_CHAT_BLACK_LIST or IS_TOTAL_CENSORSHIP:
-        await resend_photo_with_spoiler(message, custom_caption)
+        await resend_photo_with_spoiler(message, custom_caption, context)
     else:
-        await spoiler_based_on_model_prediction(message, custom_caption)
+        await spoiler_with_model_prediction(message, custom_caption, context)
 
     logging.info(f"Chat {message.chat_id} - All users {USERS}, BLACK_LIST: {FORWARD_CHAT_BLACK_LIST}")
 
 
-async def spoiler_based_on_model_prediction(message: Message, custom_caption: str):
-    photo_file = await bot.get_file(message.photo[-2].file_id)
+async def spoiler_with_model_prediction(message: Message, custom_caption: str, context: ContextTypes.DEFAULT_TYPE):
+    photo_file = await context.bot.get_file(message.photo[-2].file_id)
     logging.info(f"File size: {message.photo[-2].file_size}")
     photo_bytearray = await photo_file.download_as_bytearray()
     photo_bytes_io = io.BytesIO(photo_bytearray)
@@ -80,10 +79,10 @@ async def spoiler_based_on_model_prediction(message: Message, custom_caption: st
         logging.info(predictions)
         is_nsfw, prediction_caption = analyse_predictions(predictions)
         if is_nsfw:
-            await resend_photo_with_spoiler(message, f"{custom_caption} {prediction_caption}")
+            await resend_photo_with_spoiler(message, f"{custom_caption} {prediction_caption}", context)
     except Exception as e:
         logging.error(f"Model error... {str(e)}", exc_info=True)
-        await bot.send_message(ADMIN_CHAT, "Model error...")
+        await context.bot.send_message(ADMIN_CHAT, "Model error...")
 
 
 def analyse_predictions(predictions: dict) -> tuple:
@@ -105,14 +104,14 @@ async def spoiler_reply_to_photo(update: Update, context: ContextTypes.DEFAULT_T
         reporter_username = message.from_user.username
         from_caption = f'From {reply_to_message.from_user.username} (spoilered by {reporter_username})'
         custom_caption = f'{from_caption}: {reply_to_message.caption}' if reply_to_message.caption else from_caption
-        await resend_photo_with_spoiler(reply_to_message, custom_caption)
+        await resend_photo_with_spoiler(reply_to_message, custom_caption, context)
 
     await message.delete()
 
 
-async def resend_photo_with_spoiler(message: Message, custom_caption: str) -> None:
+async def resend_photo_with_spoiler(message: Message, custom_caption: str, context: ContextTypes.DEFAULT_TYPE) -> None:
     await message.delete()
-    await bot.send_photo(message.chat_id, message.photo[-1].file_id, caption=custom_caption, has_spoiler=True)
+    await context.bot.send_photo(message.chat_id, message.photo[-1].file_id, caption=custom_caption, has_spoiler=True)
 
 
 async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -120,7 +119,7 @@ async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     message = update.effective_message
     if is_reply_command_valid(update.effective_message):
         await message.delete()
-        await bot.delete_message(chat_id, message.reply_to_message.message_id)
+        await context.bot.delete_message(chat_id, message.reply_to_message.message_id)
 
 
 async def add_forward_chat_to_black_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -136,9 +135,9 @@ async def toggle_total_censorship(update: Update, context: ContextTypes.DEFAULT_
     chat_id = update.effective_message.chat_id
     if is_admin(update.effective_message):
         IS_TOTAL_CENSORSHIP = not IS_TOTAL_CENSORSHIP
-        await bot.send_message(chat_id, f"Total censorship set to {IS_TOTAL_CENSORSHIP}")
+        await context.bot.send_message(chat_id, f"Total censorship set to {IS_TOTAL_CENSORSHIP}")
     else:
-        await bot.delete_message(chat_id, update.effective_message.message_id)
+        await context.bot.delete_message(chat_id, update.effective_message.message_id)
 
 
 def error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
