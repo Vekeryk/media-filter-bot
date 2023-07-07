@@ -4,7 +4,7 @@ import io
 import logging
 
 from model import load_model, classify
-from telegram import ChatPermissions, Bot
+from telegram import ChatPermissions, Bot, Message
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from constants import ADMIN_CHAT, ADMIN_LIST, AUTO_CAPTION, BOT_ID, TOKEN, USERS, USER_BLACK_LIST, FORWARD_CHAT_BLACK_LIST
@@ -37,7 +37,7 @@ async def unban_user_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await bot.send_message(chat_id, f"{username} media was unbunned.")
 
 
-async def ban_user_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ban_user_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_admin(update.effective_message):
         return
 
@@ -50,50 +50,43 @@ async def ban_user_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await bot.send_message(chat_id, f"{username} media was bunned.")
 
 
-async def blur_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def sloiler_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
-    original_username = update.effective_message.from_user.username
-    if update.message.reply_to_message:
-        message = update.message.reply_to_message
-
     user_id = message.from_user.id
     username = message.from_user.username
-    chat_id = message.chat_id
     USERS[username] = user_id
 
     if not message.photo or user_id == BOT_ID:
         return
 
-    message_id = message.message_id
-    caption = message.caption
-    author = f'Від {username} (spoilered by {original_username})' if update.message.reply_to_message else f'Від {username}'
-    custom_caption = f'{author}: {caption}' if caption else author
+    custom_caption = f'Від {username}: {message.caption}' if message.caption else f'Від {username}'
     forward_from_chat = message.forward_from_chat
 
-    if update.message.reply_to_message and user_id != BOT_ID:
-        await bot.delete_message(chat_id, update.effective_message.message_id)
-        await resend_message_with_spoiler(chat_id, message_id, message.photo, custom_caption)
-    elif forward_from_chat and forward_from_chat.id in FORWARD_CHAT_BLACK_LIST or IS_TOTAL_CENSORSHIP:
-        await resend_message_with_spoiler(chat_id, message_id, message.photo, custom_caption)
+    if forward_from_chat and forward_from_chat.id in FORWARD_CHAT_BLACK_LIST or IS_TOTAL_CENSORSHIP:
+        await resend_photo_with_spoiler(message, custom_caption)
     else:
-        photo_file = await bot.get_file(message.photo[-2].file_id)
-        logging.info(f"File size: {message.photo[-2].file_size}")
-        photo_bytearray = await photo_file.download_as_bytearray()
-        photo_bytes_io = io.BytesIO(photo_bytearray)
-        try:
-            predictions = classify(model, photo_bytes_io)
-            logging.info(predictions)
-            is_nsfw, prediction_caption = analyse_predictions(predictions)
-            if is_nsfw:
-                await resend_message_with_spoiler(chat_id, message_id, message.photo, f"{custom_caption} {prediction_caption}")
-        except Exception as e:
-            logging.error(f"Model error... {str(e)}", exc_info=True)
-            await bot.send_message(ADMIN_CHAT, "Model error...")
+        await spoiler_based_on_model_prediction(message, custom_caption)
 
-    logging.info(f"Chat {chat_id} - All users {USERS}, BLACK_LIST: {FORWARD_CHAT_BLACK_LIST}")
+    logging.info(f"Chat {message.chat_id} - All users {USERS}, BLACK_LIST: {FORWARD_CHAT_BLACK_LIST}")
 
 
-def analyse_predictions(predictions):
+async def spoiler_based_on_model_prediction(message: Message, custom_caption: str):
+    photo_file = await bot.get_file(message.photo[-2].file_id)
+    logging.info(f"File size: {message.photo[-2].file_size}")
+    photo_bytearray = await photo_file.download_as_bytearray()
+    photo_bytes_io = io.BytesIO(photo_bytearray)
+    try:
+        predictions = classify(model, photo_bytes_io)
+        logging.info(predictions)
+        is_nsfw, prediction_caption = analyse_predictions(predictions)
+        if is_nsfw:
+            await resend_photo_with_spoiler(message, f"{custom_caption} {prediction_caption}")
+    except Exception as e:
+        logging.error(f"Model error... {str(e)}", exc_info=True)
+        await bot.send_message(ADMIN_CHAT, "Model error...")
+
+
+def analyse_predictions(predictions: dict) -> tuple:
     predictions.pop("Neutral")
     if predictions["Drawing"] > 49 and predictions["Hentai"] > 29:
         return True, AUTO_CAPTION.format(f"Drawing={predictions['Drawing']}, Hentai={predictions['Hentai']}")
@@ -104,9 +97,22 @@ def analyse_predictions(predictions):
     return False, "Photo is neutral"
 
 
-async def resend_message_with_spoiler(chat_id, message_id, photo, custom_caption) -> None:
-    await bot.delete_message(chat_id, message_id)
-    await bot.send_photo(chat_id, photo[-1].file_id, caption=custom_caption, has_spoiler=True)
+async def spoiler_reply_to_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    reply_to_message = update.message.reply_to_message
+
+    if reply_to_message and reply_to_message.photo and reply_to_message.from_user.id != BOT_ID:
+        reporter_username = message.from_user.username
+        from_caption = f'From {reply_to_message.from_user.username} (spoilered by {reporter_username})'
+        custom_caption = f'{from_caption}: {reply_to_message.caption}' if reply_to_message.caption else from_caption
+        await resend_photo_with_spoiler(reply_to_message, custom_caption)
+
+    await message.delete()
+
+
+async def resend_photo_with_spoiler(message: Message, custom_caption: str) -> None:
+    await message.delete()
+    await bot.send_photo(message.chat_id, message.photo[-1].file_id, caption=custom_caption, has_spoiler=True)
 
 
 async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -122,10 +128,10 @@ async def add_forward_chat_to_black_list(update: Update, context: ContextTypes.D
     if is_reply_command_valid(update.effective_message) and reply_to_message.forward_from_chat:
         FORWARD_CHAT_BLACK_LIST.add(reply_to_message.forward_from_chat.id)
         logging.info("Added chat to black list: {FORWARD_CHAT_BLACK_LIST}")
-        await blur_photo(update, context)
+        await spoiler_reply_to_photo(update, context)
 
 
-async def toggle_censorship(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def toggle_total_censorship(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     global IS_TOTAL_CENSORSHIP
     chat_id = update.effective_message.chat_id
     if is_admin(update.effective_message):
@@ -136,34 +142,34 @@ async def toggle_censorship(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 def error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    print(f"Update {update} caused error {context.error}")
+    logging.info(f"Update {update} caused error {context.error}")
 
 
-def is_reply_command_valid(message):
+def is_reply_command_valid(message: Message) -> bool:
     user_id = message.from_user.id
     reply_to_message = message.reply_to_message
     return user_id in ADMIN_LIST and reply_to_message
 
 
-def is_admin(message):
+def is_admin(message: Message) -> bool:
     user_id = message.from_user.id
     return user_id in ADMIN_LIST
 
 
-def get_username_from_command(message):
+def get_username_from_command(message: Message) -> str:
     return message.text.split(" ")[1].removeprefix("@")
 
 
 def main() -> None:
     application = Application.builder().token(TOKEN).build()
 
-    application.add_handler(MessageHandler(filters.PHOTO, blur_photo))
-    application.add_handler(CommandHandler("blur", blur_photo))
+    application.add_handler(MessageHandler(filters.PHOTO, sloiler_nsfw_photo))
+    application.add_handler(CommandHandler("blur", spoiler_reply_to_photo))
     application.add_handler(CommandHandler("add", add_forward_chat_to_black_list))
     application.add_handler(CommandHandler("delete", delete_message))
     application.add_handler(CommandHandler("ban", ban_user_media))
     application.add_handler(CommandHandler("unban", unban_user_media))
-    application.add_handler(CommandHandler("censor", toggle_censorship))
+    application.add_handler(CommandHandler("censor", toggle_total_censorship))
 
     application.add_error_handler(error)
 
