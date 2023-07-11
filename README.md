@@ -4,4 +4,6 @@ _This bot uses model from https://github.com/GantMan/nsfw_model_
 - Add spoilers to photos
 - Detect nsfw content using Keras model predictions 
 - Add forward-from-chat to black list
-- Restrict users media
+- Restrict users media  
+
+**Install dependencies** - `pip install python-telegram-bot numpy tensorflow tensorflow_hub Pillow`
