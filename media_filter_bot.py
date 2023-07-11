@@ -57,7 +57,7 @@ async def sloiler_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not message.photo or user_id == context.bot.id:
         return
 
-    custom_caption = f'Від {username}: {message.caption}' if message.caption else f'Від {username}'
+    custom_caption = f'From {username}: {message.caption}' if message.caption else f'From {username}'
     forward_from_chat = message.forward_from_chat
 
     if forward_from_chat and forward_from_chat.id in FORWARD_CHAT_BLACK_LIST or IS_TOTAL_CENSORSHIP:
