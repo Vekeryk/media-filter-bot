@@ -54,7 +54,7 @@ async def sloiler_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
     username = message.from_user.username
     USERS[username] = user_id
 
-    if not message.photo or user_id == context.bot.id:
+    if not message.photo or message.has_media_spoiler:
         return
 
     custom_caption = f'From {username}: {message.caption}' if message.caption else f'From {username}'
